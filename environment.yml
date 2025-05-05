@@ -7,6 +7,7 @@ dependencies:
   - numpy
   - click
   - hidapi
+  - pillow
   - pip
   - pip:
       - click==8.1.7

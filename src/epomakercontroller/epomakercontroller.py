@@ -16,14 +16,19 @@ import subprocess
 from types import FrameType
 import re
 from PIL import Image
-from .commands.data.constants import BUFF_LENGTH, VENDOR_ID, PRODUCT_IDS_WIRED
+from .commands.data.constants import (
+    BUFF_LENGTH,
+    VENDOR_ID,
+    PRODUCT_IDS_WIRED,
+    MAX_NUM_PIXELS,
+)
 
-CONST_HEADER = bytes.fromhex("00") + bytes.fromhex("29000100")
+CONST_HEADER = bytes([0x29, 0x00, 0x01, 0x00])
 BASE_ADDRESS = 0x0000389D
 HEADER_SIZE = 4 + 2 + 2  # constant + incrementing nibble + decrementing nibble
 MAX_PACKET_SIZE = 64
 PAYLOAD_SIZE = MAX_PACKET_SIZE - HEADER_SIZE  # 56 bytes for pixel data
-FIRST_PACKET = bytes.fromhex("00") + bytes.fromhex(
+FIRST_PACKET = bytes.fromhex(
     "a9000100540600fb00003c0900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 )
 
@@ -55,8 +60,8 @@ class EpomakerController:
         self.dry_run = dry_run
         self.vendor_id = VENDOR_ID
         self.use_wireless = False
-        self.product_ids: list[int] = PRODUCT_IDS_WIRED  # TODO
-        self.device_description = ""  # TODO
+        self.product_ids: list[int] = PRODUCT_IDS_WIRED
+        self.device_description = ""
         self.device = hid.device()
         self.device_list: list[dict[str, Any]] = []
         print(
@@ -281,7 +286,9 @@ class EpomakerController:
             r = range(0, 100)  # 0 to 99
         return value in r
 
-    def _encode_image(self, image_path):
+    def _encode_image(self, image_path, debug=False):
+        if debug:
+            return bytes.fromhex("7e7321" * MAX_NUM_PIXELS)
         image = Image.open(image_path).convert("RGB").resize((60, 9))
         pixel_data = bytearray()
 
@@ -320,17 +327,17 @@ class EpomakerController:
             # Pixel payload (56 bytes max per packet)
             packet[8 : 8 + len(chunk)] = chunk
 
-            # Pad with 0x00 if the packet has fewer than 56 bytes of pixel data
-            if len(chunk) < PAYLOAD_SIZE:
-                packet[8 + len(chunk) : MAX_PACKET_SIZE] = b"\x00" * (
-                    MAX_PACKET_SIZE - len(chunk) - HEADER_SIZE
-                )
+            # add 00 to the end if the packet has fewer than 56 bytes of pixel data
+            data_size = 8 + len(chunk)
+            if data_size < MAX_PACKET_SIZE:
+                packet[data_size + 1 :] = b"\x00" * (MAX_PACKET_SIZE - data_size - 1)
 
             # Increment nibble for next packet
             incrementing_nibble += 1
             decrementing_nibble -= 1
 
             packets.append(packet)
+        packets[-1][6:8] = bytearray([0x34, 0x85])
 
         return packets
 
@@ -338,18 +345,18 @@ class EpomakerController:
         if self.dry_run:
             print(f"Dry run: skipping command send: {packet!r}")
         else:
-            self.device.send_feature_report(packet)
-            # self.device.write(packet)
+            self.device.send_feature_report(bytes.fromhex("00") + packet)
+            time.sleep(0.005)
 
     def _get_packet(self, id=0x00):
         if self.dry_run:
             print(f"Dry run: skipping get_feature_report({id}, 64)")
         else:
-            self.device.get_feature_report(0, MAX_PACKET_SIZE)
-            pass
+            self.device.get_feature_report(0, MAX_PACKET_SIZE + 1)
+            time.sleep(0.005)
 
     def send_image(self, image_path: str) -> None:
-        image_raw_data = self._encode_image(image_path)
+        image_raw_data = self._encode_image(image_path, debug=False)
 
         assert self.device, "Device is not set!"
         try:
@@ -361,20 +368,13 @@ class EpomakerController:
 
         self._set_packet(FIRST_PACKET)
 
-        time.sleep(0.005)
-
-        # TODO: Get packet is not working
         self._get_packet()
 
-        time.sleep(0.005)
-
         for packet in commands:
-            # assert len(packet) == BUFF_LENGTH
             if self.dry_run:
                 print(f"Dry run: skipping command send: {packet!r}")
             else:
                 self._set_packet(packet)
-                time.sleep(0.002)
 
     def close_device(self) -> None:
         """Closes the USB HID device."""

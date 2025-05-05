@@ -13,3 +13,4 @@ __pycache__/
 /venv/
 poetry.lock
 epomaker
+.venv
