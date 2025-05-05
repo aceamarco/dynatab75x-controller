@@ -298,13 +298,17 @@ class EpomakerController:
 
         image = Image.open(image_path).convert("RGB")
 
-        if (image.width, image.height) != IMAGE_DIMENSIONS:
-            image = image.resize(IMAGE_DIMENSIONS)  # Make sure to use the resized image
+        if (image.height, image.width) != IMAGE_DIMENSIONS:
+            image = image.resize(IMAGE_DIMENSIONS)
 
         pixel_data = bytearray()
 
-        for rgb in image.getdata():  # Flattened, row-major order
-            pixel_data.extend(self._rgb_to_hex(rgb))
+        rows, cols = IMAGE_DIMENSIONS
+
+        for col in range(cols):
+            for row in range(rows):
+                rgb = image.getpixel((col, row))
+                pixel_data.extend(self._rgb_to_hex(rgb))
 
         return pixel_data
 

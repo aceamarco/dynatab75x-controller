@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 # TODO: Add this to the config files
 BUFF_LENGTH = 128 // 2  # 128 bytes / 2 bytes per int
-IMAGE_DIMENSIONS = (60, 9)
+IMAGE_DIMENSIONS = (9, 60)
 MAX_NUM_PIXELS = 60 * 9
 VENDOR_ID = 0x3151
 
