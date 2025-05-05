@@ -21,6 +21,7 @@ from .commands.data.constants import (
     VENDOR_ID,
     PRODUCT_IDS_WIRED,
     MAX_NUM_PIXELS,
+    IMAGE_DIMENSIONS,
 )
 
 CONST_HEADER = bytes([0x29, 0x00, 0x01, 0x00])
@@ -286,20 +287,24 @@ class EpomakerController:
             r = range(0, 100)  # 0 to 99
         return value in r
 
+    def _rgb_to_hex(self, rgb: tuple) -> bytes:
+        """Converts an RGB tuple to a bytes object representing a hexadecimal color."""
+        hex_str = "{:02x}{:02x}{:02x}".format(*rgb)
+        return bytes.fromhex(hex_str)
+
     def _encode_image(self, image_path, debug=False):
         if debug:
             return bytes.fromhex("7e7321" * MAX_NUM_PIXELS)
-        image = Image.open(image_path).convert("RGB").resize((60, 9))
+
+        image = Image.open(image_path).convert("RGB")
+
+        if (image.width, image.height) != IMAGE_DIMENSIONS:
+            image = image.resize(IMAGE_DIMENSIONS)  # Make sure to use the resized image
+
         pixel_data = bytearray()
 
-        for y in range(9):
-            row = range(60) if y % 2 == 0 else reversed(range(60))  # zigzag pattern
-            for x in row:
-                r, g, b = image.getpixel((x, y))
-                # Convert to RGB565
-                rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3)
-                pixel_data.append((rgb565 >> 8) & 0xFF)  # high byte
-                pixel_data.append(rgb565 & 0xFF)  # low byte
+        for rgb in image.getdata():  # Flattened, row-major order
+            pixel_data.extend(self._rgb_to_hex(rgb))
 
         return pixel_data
 
