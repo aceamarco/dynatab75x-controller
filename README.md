@@ -1,17 +1,9 @@
-# Dynatab75x Controller
-
 ![Header](debug_images/header.png)
 
 A CLI tool to interact with an [Epomaker Dynatab75x](https://epomaker.com/products/epomaker-dynatab75x) keyboard that comes with a small **60x9 pixel screen** attached.
 
 > ⚠️ This project is still very rough around the edges!  
 > ⚠️ NOTE: Currently, this only works over a **USB connection**!
-
----
-
-**Disclaimer**  
-This is an independent, third-party project. It is **not affiliated with, endorsed by, or supported by Epomaker or its parent companies**.  
-All trademarks, including "Epomaker" and "Dynatab75x", are the property of their respective owners and are used here solely for the purpose of compatibility and identification.
 
 ---
 
@@ -131,3 +123,9 @@ please [file an issue] with a detailed description.
 [license]: https://github.com/imp3ga/EpomakerController/blob/main/LICENSE
 [contributor guide]: https://github.com/imp3ga/EpomakerController/blob/main/CONTRIBUTING.md
 [command-line reference]: https://EpomakerController.readthedocs.io/en/latest/usage.html
+
+**Disclaimer**  
+This is an independent, third-party project. It is **not affiliated with, endorsed by, or supported by Epomaker or its parent companies**.  
+All trademarks, including "Epomaker" and "Dynatab75x", are the property of their respective owners and are used here solely for the purpose of compatibility and identification.
+
+---
