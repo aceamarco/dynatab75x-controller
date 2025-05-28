@@ -19,16 +19,12 @@ def cli() -> None:
     pass
 
 
-@cli.command()
-@click.argument("image_path", type=click.Path(exists=True))
-def upload_image(image_path: str) -> None:
-    """Upload an image to the Epomaker device.
-
-    Args:
-        image_path (str): The path to the image file to upload.
-    """
-    logging.debug(f"Starting upload_image command with image_path: {image_path}")
+def _upload_file(file_path: str, is_animation: bool) -> None:
+    """Helper function to upload an image or animation to the Epomaker device."""
     controller = None
+    upload_type = "animation" if is_animation else "image"
+    logging.debug(f"Starting upload for {upload_type}: {file_path}")
+
     try:
         controller = EpomakerController()
         logging.debug("EpomakerController initialized.")
@@ -36,19 +32,22 @@ def upload_image(image_path: str) -> None:
         if controller.open_device():
             logging.debug("Device opened successfully.")
             print(
-                "Uploading, you should see the status on the keyboard screen.\n"
+                f"Uploading {upload_type}, you should see the status on the keyboard screen.\n"
                 "The keyboard will be unresponsive during this process."
             )
-            logging.debug(f"Sending image: {image_path}")
-            controller.send_image(image_path)
-            logging.info("Image uploaded successfully.")
-            click.echo("Image uploaded successfully.")
+            if is_animation:
+                controller.send_animation(file_path)
+            else:
+                controller.send_image(file_path)
+
+            logging.info(f"{upload_type.capitalize()} uploaded successfully.")
+            click.echo(f"{upload_type.capitalize()} uploaded successfully.")
         else:
             logging.warning("Failed to open device.")
             click.echo("Failed to open device.")
     except Exception as e:
-        logging.exception("Exception occurred during image upload.")
-        click.echo(f"Failed to upload image: {e}")
+        logging.exception(f"Exception occurred during {upload_type} upload.")
+        click.echo(f"Failed to upload {upload_type}: {e}")
     finally:
         if controller:
             logging.debug("Closing device.")
@@ -57,32 +56,17 @@ def upload_image(image_path: str) -> None:
 
 
 @cli.command()
-@click.option(
-    "--test",
-    "test_mode",
-    is_flag=True,
-    help="Start daemon in test mode, sending random data.",
-)
-@click.argument("temp_key", type=str, required=False)
-def start_daemon(temp_key: str | None, test_mode: bool) -> None:
-    """Start a daemon to update the CPU usage and optionally a temperature.
+@click.argument("file_path", type=click.Path(exists=True))
+def upload_image(file_path: str) -> None:
+    """Upload an image to the Epomaker device."""
+    _upload_file(file_path, is_animation=False)
 
-    Args:
-        temp_key (str): A label corresponding to the device to monitor.
-        test_mode (bool): Send random ints instead of real values.
-    """
-    try:
-        controller = EpomakerController()
-        if not controller.open_device():
-            click.echo("Failed to open device.")
-            return
-        controller.start_daemon(temp_key, test_mode)
 
-    except KeyboardInterrupt:
-        click.echo("Daemon interrupted by user.")
-    except Exception as e:
-        click.echo(f"Error in start-daemon: {e}")
-    controller.close_device()
+@cli.command()
+@click.argument("file_path", type=click.Path(exists=True))
+def upload_animation(file_path: str) -> None:
+    """Upload an animation to the Epomaker device."""
+    _upload_file(file_path, is_animation=True)
 
 
 @cli.command()

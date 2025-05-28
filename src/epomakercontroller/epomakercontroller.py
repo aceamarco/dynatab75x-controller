@@ -5,17 +5,18 @@ for an Epomaker USB HID device.
 """
 
 import dataclasses
-from datetime import datetime
 from json import dumps
 import os
 import time
-from typing import Any, Callable, Optional
+from typing import Any, Union, Optional
 import hid  # type: ignore[import-not-found]
 import signal
 import subprocess
 from types import FrameType
 import re
-from PIL import Image
+from PIL import Image, UnidentifiedImageError, ImageSequence
+import logging
+from pathlib import Path
 from .commands.data.constants import (
     BUFF_LENGTH,
     VENDOR_ID,
@@ -32,6 +33,13 @@ PAYLOAD_SIZE = MAX_PACKET_SIZE - HEADER_SIZE  # 56 bytes for pixel data
 FIRST_PACKET = bytes.fromhex(
     "a9000100540600fb00003c0900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
 )
+
+# TODO: confirm is the second 4 bytes means anything
+FIRST_ANIMATION_PACKET = bytes.fromhex(
+    "a9000932540600c100003c0900000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+)
+
+logger = logging.getLogger(__name__)
 
 
 class EpomakerController:
@@ -292,63 +300,142 @@ class EpomakerController:
         hex_str = "{:02x}{:02x}{:02x}".format(*rgb)
         return bytes.fromhex(hex_str)
 
-    def _encode_image(self, image_path, debug=False):
-        if debug:
-            return bytes.fromhex("7e7321" * MAX_NUM_PIXELS)
+    def _encode_image(
+        self, image_input: Union[str, Path, Image.Image], debug: bool = False
+    ) -> bytearray:
+        """
+        Encodes an image to a bytearray suitable for the Epomaker device.
 
-        image = Image.open(image_path).convert("RGB")
+        Args:
+            image_input (Union[str, Path, Image.Image]): Path to the image file or a PIL image object.
+            debug (bool): If True, return a dummy image with fixed pixel data.
+
+        Returns:
+            bytearray: Encoded image data.
+        """
+        if debug:
+            logging.debug("Debug mode active. Returning dummy image data.")
+            return bytearray.fromhex("7e7321" * MAX_NUM_PIXELS)
+
+        if isinstance(image_input, (str, Path)):
+            logging.debug(f"Opening image from path: {image_input}")
+            image = Image.open(image_input)
+        elif isinstance(image_input, Image.Image):
+            logging.debug("Using provided PIL.Image object.")
+            image = image_input
+        else:
+            raise TypeError("image_input must be a file path or PIL.Image.Image")
+
+        logging.debug(f"Original image mode: {image.mode}, size: {image.size}")
+        image = image.convert("RGB")
 
         if (image.height, image.width) != IMAGE_DIMENSIONS:
-            image = image.resize(IMAGE_DIMENSIONS)
+            # todo fix this so you dont have to reverse the tuple
+            logging.debug(
+                f"Resizing image from {image.size} to {IMAGE_DIMENSIONS[::-1]}"
+            )
+            image = image.resize(IMAGE_DIMENSIONS[::-1])
 
         pixel_data = bytearray()
-
         rows, cols = IMAGE_DIMENSIONS
 
+        logging.debug(f"Encoding image pixels in column-major order ({cols}x{rows})")
         for col in range(cols):
             for row in range(rows):
                 rgb = image.getpixel((col, row))
                 pixel_data.extend(self._rgb_to_hex(rgb))
 
+        logging.debug(f"Encoded {len(pixel_data)} bytes of pixel data")
         return pixel_data
 
-    def _chunk_image_data(self, image_data: bytearray) -> list[bytearray]:
+    def _chunk_data(
+        self,
+        data: list[bytearray] | bytearray,
+        base_address: int,
+        final_packet_overrides: list[tuple[int, int]] = None,
+        per_frame_override: bool = False,
+        is_animation: bool = False,
+    ) -> list[bytearray]:
+        if isinstance(data, bytearray):
+            data = [data]
+
         packets = []
 
-        # Start the incrementing and decrementing nibble
-        incrementing_nibble = 0
-        decrementing_nibble = BASE_ADDRESS
+        for frame_index, frame_data in enumerate(data):
+            incrementing_nibble = 0
+            decrementing_nibble = base_address
 
-        for chunk_index, offset in enumerate(range(0, len(image_data), PAYLOAD_SIZE)):
-            chunk = image_data[offset : offset + PAYLOAD_SIZE]
-            packet = bytearray(MAX_PACKET_SIZE)
+            logger.debug(
+                f"Processing frame {frame_index}, data length: {len(frame_data)}"
+            )
 
-            # Header: 4 bytes constant (29 00 01 00)
-            # TODO: Const header is showing up as 29 00 01, dropping the last 00
-            packet[0:4] = CONST_HEADER
+            for offset in range(0, len(frame_data), PAYLOAD_SIZE):
+                chunk = frame_data[offset : offset + PAYLOAD_SIZE]
+                packet = bytearray(MAX_PACKET_SIZE)
 
-            # Incrementing nibble (2 bytes)
-            packet[4:6] = (incrementing_nibble).to_bytes(2, byteorder="little")
+                # Header: byte 0 is fixed, byte 1 is frame counter, bytes 2-3 depend on image vs animation
+                packet[0] = 0x29
+                packet[1] = frame_index
+                # todo: check that animation does not have more than 255 frames
+                packet[2] = len(data) if is_animation else 0x01
+                packet[3] = 0x32 if is_animation else 0x00
 
-            # Decrementing nibble (2 bytes)
-            packet[6:8] = (decrementing_nibble).to_bytes(2, byteorder="big")
+                # Incrementing nibble (2 bytes)
+                packet[4:6] = incrementing_nibble.to_bytes(2, byteorder="little")
 
-            # Pixel payload (56 bytes max per packet)
-            packet[8 : 8 + len(chunk)] = chunk
+                # Decrementing nibble (2 bytes)
+                packet[6:8] = decrementing_nibble.to_bytes(2, byteorder="big")
 
-            # add 00 to the end if the packet has fewer than 56 bytes of pixel data
-            data_size = 8 + len(chunk)
-            if data_size < MAX_PACKET_SIZE:
-                packet[data_size + 1 :] = b"\x00" * (MAX_PACKET_SIZE - data_size - 1)
+                # Pixel payload
+                packet[8 : 8 + len(chunk)] = chunk
 
-            # Increment nibble for next packet
-            incrementing_nibble += 1
-            decrementing_nibble -= 1
+                # Pad if payload is smaller than max
+                data_size = 8 + len(chunk)
+                if data_size < MAX_PACKET_SIZE:
+                    packet[data_size + 1 :] = b"\x00" * (
+                        MAX_PACKET_SIZE - data_size - 1
+                    )
 
-            packets.append(packet)
-        packets[-1][6:8] = bytearray([0x34, 0x85])
+                logger.debug(
+                    f"Packet #{len(packets)} | Frame: {frame_index} | Offset: {offset} "
+                    f"| Inc: {incrementing_nibble:04x} | Dec: {decrementing_nibble:04x} | Chunk size: {len(chunk)}"
+                )
 
+                incrementing_nibble += 1
+                decrementing_nibble -= 1
+
+                packets.append(packet)
+
+            # Override last packet decrementing nibble if needed
+            if per_frame_override and final_packet_overrides:
+                override_value = final_packet_overrides[frame_index]
+                packets[-1][6:8] = bytearray(override_value)
+                logger.debug(
+                    f"Applied final packet override to frame {frame_index}: "
+                    f"{override_value[0]:02x} {override_value[1]:02x}"
+                )
+
+        logger.info(f"Total packets generated: {len(packets)}")
         return packets
+
+    def _chunk_image_data(self, image_data: bytearray) -> list[bytearray]:
+        return self._chunk_data(
+            data=image_data,
+            base_address=BASE_ADDRESS,
+            final_packet_overrides=[(0x34, 0x85)],
+            per_frame_override=True,
+            is_animation=False,
+        )
+
+    def _chunk_animation_data(self, animation_data: list[bytearray]) -> list[bytearray]:
+        overrides = [(0x34, 0x49 - i) for i in range(len(animation_data))]
+        return self._chunk_data(
+            data=animation_data,
+            base_address=0x00003861,
+            final_packet_overrides=overrides,
+            per_frame_override=True,
+            is_animation=True,
+        )
 
     def _set_packet(self, packet):
         if self.dry_run:
@@ -364,6 +451,7 @@ class EpomakerController:
             self.device.get_feature_report(0, MAX_PACKET_SIZE + 1)
             time.sleep(0.005)
 
+    # TODO: Make a script that imports this module and sends text to the LED display
     def send_image(self, image_path: str) -> None:
         image_raw_data = self._encode_image(image_path, debug=False)
 
@@ -383,6 +471,62 @@ class EpomakerController:
             if self.dry_run:
                 print(f"Dry run: skipping command send: {packet!r}")
             else:
+                self._set_packet(packet)
+
+    def send_animation(self, file_path: str = None, debug: bool = False):
+        if not self.device:
+            raise ValueError("Device is not set!")
+
+        try:
+            self.device.get_product_string()
+        except Exception as e:
+            raise IOError("Could not communicate with device") from e
+
+        if debug or not file_path:
+            # Load default test animation (TODO: replace with actual default path)
+            file_path = "assets/debug_animation.gif"
+            logger.info(f"Debug mode active. Using debug animation: {file_path}")
+
+        file_path = Path(file_path)
+        if not file_path.exists():
+            raise FileNotFoundError(f"Animation file not found: {file_path}")
+
+        try:
+            with Image.open(file_path) as img:
+                logger.info(f"Opened animation: {file_path}")
+                frames = []
+                for i, frame in enumerate(ImageSequence.Iterator(img)):
+                    logger.debug(
+                        f"Processing frame {i} - mode: {frame.mode}, size: {frame.size}"
+                    )
+                    # Convert to RGB to ensure consistency
+                    converted = frame.convert("RGB")
+                    frames.append(self._encode_image(converted))
+        except UnidentifiedImageError:
+            raise ValueError(f"Unsupported image format: {file_path}")
+        except Exception as e:
+            logger.error(f"Failed to process animation: {e}")
+            raise
+
+        if not frames:
+            raise ValueError("No frames extracted from animation")
+
+        packets = self._chunk_animation_data(frames)
+
+        logger.info(f"Sending {len(packets)} animation packets")
+        first_packet = FIRST_PACKET
+        # todo: fix TypeError: 'bytes' object does not support item assignment
+        first_packet[2] = len(frames)
+        # todo: check that gif has at least two frames
+        first_packet[7] = 0xC8 - (len(frames) - 2)
+        self._set_packet(first_packet)
+        self._get_packet()
+
+        for i, packet in enumerate(packets):
+            if self.dry_run:
+                logger.debug(f"Dry run: Skipping packet #{i}")
+            else:
+                logger.debug(f"Sending packet #{i}")
                 self._set_packet(packet)
 
     def close_device(self) -> None:

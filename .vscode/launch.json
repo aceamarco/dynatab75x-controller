@@ -1,0 +1,78 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Upload Default Image",
+      "type": "python",
+      "request": "launch",
+      "module": "src.epomakercontroller",
+      "console": "integratedTerminal",
+      "args": [
+        "upload-image",
+        "${workspaceFolder}/debug_images/red_pandas_60x9.png"
+      ]
+    },
+    {
+      "name": "Upload Custom Image",
+      "type": "python",
+      "request": "launch",
+      "module": "src.epomakercontroller",
+      "console": "integratedTerminal",
+      "args": ["upload-image", "${input:uploadImagePath}"]
+    },
+
+    {
+      "name": "Send Default Text",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/graphics/graphics.py",
+      "console": "integratedTerminal",
+      "args": ["--text", "Hello, World!", "--color", "0,0,255", "--debug"]
+    },
+    {
+      "name": "Send Custom Text",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/graphics/graphics.py",
+      "console": "integratedTerminal",
+      "args": [
+        "--text",
+        "${input:customText}",
+        "--color",
+        "${input:customColor}",
+        "--debug"
+      ]
+    },
+    {
+      "name": "(NOT WORKING) Upload Animation",
+      "type": "python",
+      "request": "launch",
+      "module": "src.epomakercontroller",
+      "console": "integratedTerminal",
+      "args": [
+        "upload-animation",
+        "C:/Users/Anteiku/Downloads/daydybw-b24ae7b9-565d-4a31-b82c-064d23c8fc10.gif"
+      ]
+    }
+  ],
+  "inputs": [
+    {
+      "id": "uploadImagePath",
+      "type": "promptString",
+      "description": "Enter the full path to the image file to upload",
+      "default": "${workspaceFolder}/debug_images/your_image.png"
+    },
+    {
+      "id": "customText",
+      "type": "promptString",
+      "description": "Enter the text to display",
+      "default": "Custom Message"
+    },
+    {
+      "id": "customColor",
+      "type": "promptString",
+      "description": "Enter the RGB color (e.g., 255,255,0)",
+      "default": "255,255,0"
+    }
+  ]
+}
